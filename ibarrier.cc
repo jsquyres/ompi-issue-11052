@@ -40,6 +40,7 @@ void run(const int target,
     char answer_buffer;
     // JMS
     MPI_Request answer_request = MPI_REQUEST_NULL;
+    int num_times_called_isend = 0;
 
     // 1) Send a request
     // to simplify this message has no payload
@@ -98,13 +99,14 @@ void run(const int target,
                          comm,
                          MPI_STATUS_IGNORE);
 
-                MPI_Isend(&answer_buffer,
+                MPI_Issend(&answer_buffer,
                           1,
                           MPI_CHAR,
                           other_rank,
                           tag_deliver,
                           comm,
                           &answer_request);
+                num_times_called_isend++;
             }
         }
         // 2b) Check if we got a reply to our request
@@ -158,6 +160,7 @@ void run(const int target,
     //    received the answer to all requests
     int all_ranks_reached_barrier = 0;
     while (all_ranks_reached_barrier == 0) {
+        // 4a)
         {
             // Check if there is a request pending.
             MPI_Status status;
@@ -191,16 +194,17 @@ void run(const int target,
                          comm,
                          MPI_STATUS_IGNORE);
 
-                MPI_Isend(&answer_buffer,
+                MPI_Issend(&answer_buffer,
                           1,
                           MPI_CHAR,
                           other_rank,
                           tag_deliver,
                           comm,
                           &answer_request);
+                num_times_called_isend++;
             }
         }
-
+        // 4b)
         // check if IBarrier has been reached by every rank
         MPI_Test(&barrier_request,
                  &all_ranks_reached_barrier,
@@ -219,7 +223,18 @@ void run(const int target,
                   << " answer_request is REQ_NULL"
                   << std::endl;
     }
+    if (num_times_called_isend != 1) {
+        int my_rank;
+        MPI_Comm_rank(comm, &my_rank);
+        std::cout << "**" << getpid() << "** Iter " << iter
+                  << " Comm rank " << my_rank
+                  << " called MPI_Isend/answer_request "
+                  << num_times_called_isend << " times"
+                  << std::endl;
+    }
     MPI_Wait(&answer_request, MPI_STATUS_IGNORE);
+
+    //MPI_Barrier(comm);
 
     return;
 }
