@@ -17,27 +17,42 @@
 
 #include <mpi.h>
 #include <iostream>
-#include <vector>
+
+// JMS
+#include <assert.h>
+#include <time.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <alloca.h>
+
+static uint32_t iter = 0;
 
 void run(const int target,
-         const int reply, const bool use_iprobe, const MPI_Comm & comm)
+         const int reply,
+         const bool use_iprobe,
+         const MPI_Comm &comm)
 {
     // MPI tags for sending requests and answers.
     const int tag_request = 1;
     const int tag_deliver = 2;
 
     // Answer buffer and request. Need to be outside scope to stay alive.
-    std::vector < char >answer_buffer;
-    MPI_Request answer_request;
+    char answer_buffer;
+    // JMS
+    MPI_Request answer_request = MPI_REQUEST_NULL;
 
     // 1) Send a request
     // to simplify this message has no payload
     // (the production code has one)
-    std::vector < char >send_buffer;
+    char send_buffer;
     MPI_Request send_request;
-    MPI_Isend(send_buffer.data(),
-              send_buffer.size(),
-              MPI_CHAR, target, tag_request, comm, &send_request);
+    MPI_Issend(&send_buffer,
+              1,
+              MPI_CHAR,
+              target,
+              tag_request,
+              comm,
+              &send_request);
 
     // 2) Until we receive a reply, answer requests and check for replies.
     int received_reply = 0;
@@ -54,10 +69,16 @@ void run(const int target,
                 // after the IBarrier.
                 MPI_Iprobe(reply,
                            tag_request,
-                           comm, &request_is_pending, &status);
-            } else {
+                           comm,
+                           &request_is_pending,
+                           &status);
+            }
+            else {
                 // probe only returns once request is received
-                MPI_Probe(reply, tag_request, comm, &status);
+                MPI_Probe(reply,
+                          tag_request,
+                          comm,
+                          &status);
                 request_is_pending = 1;
             }
 
@@ -66,17 +87,24 @@ void run(const int target,
                 const auto other_rank = status.MPI_SOURCE;
                 int message_size = 0;
                 MPI_Get_count(&status, MPI_CHAR, &message_size);
+                assert(message_size == 1);
 
-                std::vector < char >buffer_recv(message_size);
-                MPI_Recv(buffer_recv.data(),
-                         buffer_recv.size(),
+                char buffer_recv;
+                MPI_Recv(&buffer_recv,
+                         1,
                          MPI_CHAR,
-                         other_rank, tag_request, comm, MPI_STATUS_IGNORE);
+                         other_rank,
+                         tag_request,
+                         comm,
+                         MPI_STATUS_IGNORE);
 
-                MPI_Isend(answer_buffer.data(),
-                          answer_buffer.size(),
+                MPI_Isend(&answer_buffer,
+                          1,
                           MPI_CHAR,
-                          other_rank, tag_deliver, comm, &answer_request);
+                          other_rank,
+                          tag_deliver,
+                          comm,
+                          &answer_request);
             }
         }
         // 2b) Check if we got a reply to our request
@@ -87,10 +115,17 @@ void run(const int target,
                 // we may or may not have a reply yet, thats ok, we will repeat
                 // the loop until we get a reply.
                 MPI_Iprobe(target,
-                           tag_deliver, comm, &received_reply, &status);
-            } else {
+                           tag_deliver,
+                           comm,
+                           &received_reply,
+                           &status);
+            }
+            else {
                 // Probe only returns when we got a reply
-                MPI_Probe(target, tag_deliver, comm, &status);
+                MPI_Probe(target,
+                          tag_deliver,
+                          comm,
+                          &status);
                 received_reply = 1;
             }
 
@@ -101,12 +136,14 @@ void run(const int target,
                 int message_size = 0;
                 MPI_Get_count(&status, MPI_CHAR, &message_size);
 
-                // message_size should always be 0 here.
-                std::vector < char >recv_buffer(message_size);
-                MPI_Recv(recv_buffer.data(),
-                         recv_buffer.size(),
+                char recv_buffer;
+                MPI_Recv(&recv_buffer,
+                         1,
                          MPI_CHAR,
-                         target, tag_deliver, comm, MPI_STATUS_IGNORE);
+                         target,
+                         tag_deliver,
+                         comm,
+                         MPI_STATUS_IGNORE);
             }
         }
     }
@@ -129,7 +166,9 @@ void run(const int target,
             if (use_iprobe == true) {
                 MPI_Iprobe(reply,
                            tag_request,
-                           comm, &request_is_pending, &status);
+                           comm,
+                           &request_is_pending,
+                           &status);
             }
             // if we used probe above, we have already answered
             // the request that was sent to us, leave request_is_pending
@@ -143,28 +182,43 @@ void run(const int target,
                 int message_size;
                 MPI_Get_count(&status, MPI_CHAR, &message_size);
 
-                // allocate memory for incoming message
-                std::vector < char >buffer_recv(message_size);
-                MPI_Recv(buffer_recv.data(),
-                         buffer_recv.size(),
+                char buffer_recv;
+                MPI_Recv(&buffer_recv,
+                         1,
                          MPI_CHAR,
-                         other_rank, tag_request, comm, MPI_STATUS_IGNORE);
+                         other_rank,
+                         tag_request,
+                         comm,
+                         MPI_STATUS_IGNORE);
 
-                MPI_Isend(answer_buffer.data(),
-                          answer_buffer.size(),
+                MPI_Isend(&answer_buffer,
+                          1,
                           MPI_CHAR,
-                          other_rank, tag_deliver, comm, &answer_request);
+                          other_rank,
+                          tag_deliver,
+                          comm,
+                          &answer_request);
             }
         }
 
         // check if IBarrier has been reached by every rank
         MPI_Test(&barrier_request,
-                 &all_ranks_reached_barrier, MPI_STATUS_IGNORE);
+                 &all_ranks_reached_barrier,
+                 MPI_STATUS_IGNORE);
     }
 
     // 5) wait for all requests to complete
     MPI_Wait(&send_request, MPI_STATUS_IGNORE);
     MPI_Wait(&barrier_request, MPI_STATUS_IGNORE);
+    ++iter;
+    if (answer_request == MPI_REQUEST_NULL) {
+        int my_rank;
+        MPI_Comm_rank(comm, &my_rank);
+        std::cout << "**" << getpid() << "** Iter " << iter
+                  << " Comm rank " << my_rank
+                  << " answer_request is REQ_NULL"
+                  << std::endl;
+    }
     MPI_Wait(&answer_request, MPI_STATUS_IGNORE);
 
     return;
@@ -187,6 +241,8 @@ int main(int argc, char *argv[])
     const int target = (my_rank + 1) % n_rank;
     const int reply = (my_rank > 0) ? (my_rank - 1) : (n_rank - 1);
 
+    // JMS
+#if 0
     // create a fresh MPI communicator for each part of the program
     MPI_Comm comm_workaround_1;
     MPI_Comm_dup(comm, &comm_workaround_1);
@@ -195,7 +251,7 @@ int main(int argc, char *argv[])
     if (my_rank == 0)
         std::cout << "Using blocking Probe:" << std::endl;
 
-    for (unsigned int i = 0; i < 30000000; ++i) {
+    for (unsigned int i = 0; i < 5 * 30000000; ++i) {
         if (i % 1000000 == 0 && my_rank == 0)
             std::cout << i << std::endl;
 
@@ -205,14 +261,14 @@ int main(int argc, char *argv[])
 
     // free communicator
     MPI_Comm_free(&comm_workaround_1);
+#endif
 
+    // JMS
+#if 0
     // Recreating the communicator for every iteration works,
     // but is very slow (at least until more than 30 million calls).
     if (my_rank == 0)
-        std::
-            cout <<
-            "Recreating communicator in each iteration with IProbe:" <<
-            std::endl;
+        std::cout << "Recreating communicator in each iteration with IProbe:" << std::endl;
 
     for (unsigned int i = 0; i < 30000000; ++i) {
         if (i % 1000000 == 0 && my_rank == 0)
@@ -224,23 +280,37 @@ int main(int argc, char *argv[])
         run(target, reply, use_iprobe, comm_workaround_2);
         MPI_Comm_free(&comm_workaround_2);
     }
+#endif
 
     // create a fresh MPI communicator for each part of the program
     MPI_Comm comm_bugged;
     MPI_Comm_dup(comm, &comm_bugged);
 
     // This deadlocks after 16.7 million calls
-    if (my_rank == 0)
+    if (my_rank == 0) {
+        std::cout << "JMS" << std::endl;
         std::cout << "Using IProbe in same communicator:" << std::endl;
+    }
 
-    for (unsigned int i = 0; i < 30000000; ++i) {
-        if (i % 1000000 == 0 && my_rank == 0)
-            std::cout << i << std::endl;
+    // JMS Put in infinite loop
+    time_t t;
+    while (true) {
+        if (0 == my_rank) {
+            t = time(NULL);
+            std::cout << ctime(&t);
+        }
+        for (unsigned int i = 0; i < 30000000; ++i) {
+            if (i % 1000000 == 0 && my_rank == 0)
+                std::cout << i << std::endl;
 
-        const bool use_iprobe = true;
-        run(target, reply, use_iprobe, comm_bugged);
+            const bool use_iprobe = true;
+            run(target, reply, use_iprobe, comm_bugged);
+        }
     }
 
     // free communicator
     MPI_Comm_free(&comm_bugged);
+    MPI_Finalize();
+
+    return 0;
 }
